@@ -3,8 +3,8 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SingleResult } from "@oh-my-pi/pi-coding-agent";
-import * as taskExecutor from "@oh-my-pi/pi-coding-agent";
 import * as executorModule from "../executor";
+import { writeGateFile } from "../gate";
 import { PipelineController } from "../pipeline";
 import type { SwarmDefinition } from "../schema";
 import { StateTracker } from "../state";
@@ -135,7 +135,7 @@ describe("PipelineController — resume from checkpoint", () => {
 
 		// executeSwarmAgent should NOT have been called for coder
 		// It should have been called only for reviewer
-		const agentNamesCalled = executeSpy.mock.calls.map((call) => call[0].name);
+		const agentNamesCalled = executeSpy.mock.calls.map(call => call[0].name);
 		expect(agentNamesCalled).not.toContain("coder");
 		expect(agentNamesCalled).toContain("reviewer");
 	});
@@ -164,7 +164,7 @@ describe("PipelineController — resume from checkpoint", () => {
 
 		// On iteration > 0, even completed agents should be re-executed
 		// The spy should have been called for iteration 1
-		const coderCalls = executeSpy.mock.calls.filter((call) => call[0].name === "coder");
+		const coderCalls = executeSpy.mock.calls.filter(call => call[0].name === "coder");
 		expect(coderCalls.length).toBeGreaterThan(0);
 	});
 
@@ -189,7 +189,7 @@ describe("PipelineController — resume from checkpoint", () => {
 		await controller.run({ workspace });
 
 		// Both agents should have been executed
-		const agentNamesCalled = executeSpy.mock.calls.map((call) => call[0].name);
+		const agentNamesCalled = executeSpy.mock.calls.map(call => call[0].name);
 		expect(agentNamesCalled).toContain("coder");
 		expect(agentNamesCalled).toContain("reviewer");
 	});
@@ -217,5 +217,77 @@ describe("PipelineController — resume from checkpoint", () => {
 		expect(coderResults).not.toBeNull();
 		expect(coderResults!.length).toBe(1);
 		expect(coderResults![0].exitCode).toBe(0);
+	});
+});
+
+// ============================================================================
+// P2b — on_timeout:fail aborts pipeline
+// ============================================================================
+
+describe("P2b — on_timeout:fail aborts pipeline", () => {
+	it("pipeline returns status 'failed' and skips downstream wave when gate times out with on_timeout:fail", async () => {
+		// Mock executeSwarmAgent — it does not write gate files in this unit test.
+		// We pre-write the gate file ourselves so readGateFile finds it, simulating
+		// what executor.ts does after a real agent run (executor.ts:99-102).
+		vi.spyOn(executorModule, "executeSwarmAgent").mockResolvedValue(
+			makeMockResult({ agent: "gated", output: "done" }),
+		);
+		const afterSpy = vi.spyOn(executorModule, "executeSwarmAgent");
+
+		const gateConfig = {
+			prompt: "Approve?",
+			actions: ["approve", "reject"],
+			timeout: 0.1,
+			onTimeout: "fail" as const,
+		};
+
+		const def: SwarmDefinition = {
+			name: "p2b-swarm",
+			workspace,
+			mode: "sequential",
+			targetCount: 1,
+			agents: new Map([
+				[
+					"gated",
+					{
+						name: "gated",
+						role: "worker",
+						task: "do work",
+						reportsTo: [],
+						waitsFor: [],
+						gate: gateConfig,
+					},
+				],
+				[
+					"after",
+					{
+						name: "after",
+						role: "reporter",
+						task: "report results",
+						reportsTo: [],
+						waitsFor: ["gated"],
+					},
+				],
+			]),
+			agentOrder: ["gated", "after"],
+		};
+
+		const tracker = new StateTracker(workspace, "p2b-swarm");
+		await tracker.init(["gated", "after"], 1, "sequential");
+
+		// Pre-write the gate file into the state dir so pipeline.ts readGateFile finds it.
+		// (In production, executor.ts writes this after the real agent run.)
+		const stateDir = path.join(tracker.swarmDir, "state");
+		await writeGateFile(stateDir, "gated", gateConfig);
+
+		const controller = new PipelineController(def, [["gated"], ["after"]], tracker);
+		const result = await controller.run({ workspace });
+
+		// Pipeline must report failure due to gate timeout with on_timeout:fail
+		expect(result.status).toBe("failed");
+
+		// Downstream "after" agent must never have been called
+		const afterCalls = afterSpy.mock.calls.filter(call => call[0].name === "after");
+		expect(afterCalls).toHaveLength(0);
 	});
 });

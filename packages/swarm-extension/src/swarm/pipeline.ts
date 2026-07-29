@@ -6,20 +6,19 @@
  * - Waves execute sequentially (wave N+1 starts after wave N completes)
  * - For pipeline mode, iterations repeat the full DAG execution
  */
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentSource, ModelRegistry, Settings, SingleResult } from "@oh-my-pi/pi-coding-agent";
 import { executeSwarmAgent } from "./executor";
-import type { SwarmDefinition } from "./schema";
-import type { StateTracker } from "./state";
 import {
 	createAmbientGate,
-	gateFileExists,
-	gateResponseExists,
-	handleGateTimeout,
+	pendingQuestionPath,
 	readGateFile,
 	scanPendingQuestions,
 	waitForGateResponse,
 } from "./gate";
+import type { SwarmDefinition } from "./schema";
+import type { StateTracker } from "./state";
 
 // ============================================================================
 // Types
@@ -273,6 +272,14 @@ export class PipelineController {
 					gateStatus: { paused: false, resolvedAction: response.decision },
 				});
 				await this.#stateTracker.appendOrchestratorLog(`Gate resolved: ${agentName} → ${response.decision}`);
+				// P2b: fail decision aborts pipeline — throw so run()'s catch sets status:"failed"
+				if (response.decision === "fail") {
+					throw new Error(`Gate timed out with on_timeout:fail for agent "${agentName}"`);
+				}
+				// Advisory: delete answered pending-question so it doesn't re-fire on next iteration
+				if (pendingQuestions.has(agentName)) {
+					await fs.rm(pendingQuestionPath(stateDir, agentName), { force: true });
+				}
 			}
 
 			options.emitProgress(waveIdx);

@@ -1,6 +1,6 @@
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as net from "node:net";
-import * as fsSync from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Process, type PtyRunResult, PtySession } from "@oh-my-pi/pi-natives";
@@ -355,6 +355,7 @@ class DaemonBroker {
 		if (process.platform !== "win32") await fs.chmod(this.#endpoint, 0o600);
 		this.#startCommandSocket();
 		this.#scheduleIdleShutdown();
+		await this.#finished.promise;
 	}
 
 	async shutdown(): Promise<void> {
@@ -383,6 +384,7 @@ class DaemonBroker {
 			await cmdClose;
 		}
 		if (process.platform !== "win32") await fs.rm(this.#commandEndpoint(), { force: true });
+		this.#finished.resolve();
 	}
 
 	#accept(socket: net.Socket): void {
@@ -1123,18 +1125,31 @@ class DaemonBroker {
 			const msg = JSON.parse(line) as { cmd?: string; payload?: Record<string, unknown> };
 			const validCmds = ["gate-response", "kill", "pause", "resume"];
 			if (!msg.cmd || !validCmds.includes(msg.cmd)) {
-				socket.write(JSON.stringify({ ok: false, error: `unknown command: ${msg.cmd ?? "(none)"}` }) + "\n");
+				socket.write(`${JSON.stringify({ ok: false, error: `unknown command: ${msg.cmd ?? "(none)"}` })}\n`);
 				return;
 			}
 
 			switch (msg.cmd) {
 				case "gate-response": {
-					// Gate response: forward to the pipeline if any daemon owns a gate
 					const payload = msg.payload ?? {};
 					const gate = typeof payload.gate === "string" ? payload.gate : undefined;
 					const action = typeof payload.action === "string" ? payload.action : undefined;
-					logger.info("Command socket: gate-response", { gate, action });
-					socket.write(JSON.stringify({ ok: true, cmd: "gate-response", gate, action }) + "\n");
+					const stateDir = typeof payload.stateDir === "string" ? payload.stateDir : undefined;
+					if (!gate || !action || !stateDir) {
+						socket.write(
+							`${JSON.stringify({ ok: false, error: "gate-response requires gate, action, stateDir" })}\n`,
+						);
+						break;
+					}
+					if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(gate)) {
+						socket.write(`${JSON.stringify({ ok: false, error: `invalid gate agent name: ${gate}` })}\n`);
+						break;
+					}
+					const responseFile = path.join(stateDir, `gate-response-${gate}.json`);
+					const record = JSON.stringify({ agent: gate, decision: action, resolvedAt: Date.now() });
+					await Bun.write(responseFile, record);
+					logger.info("Command socket: gate-response written", { gate, action, stateDir });
+					socket.write(`${JSON.stringify({ ok: true, cmd: "gate-response", gate, action })}\n`);
 					break;
 				}
 				case "kill": {
@@ -1145,33 +1160,33 @@ class DaemonBroker {
 							await this.#stopRecord(record, 5_000);
 						}
 					}
-					socket.write(JSON.stringify({ ok: true, cmd: "kill", daemon: targetName }) + "\n");
+					socket.write(`${JSON.stringify({ ok: true, cmd: "kill", daemon: targetName })}\n`);
 					break;
 				}
-			case "pause": {
-				const targetName = typeof msg.payload?.daemon === "string" ? msg.payload.daemon : undefined;
-				if (targetName) {
-					const record = this.#records.get(targetName);
-					const pid = record?.snapshot?.pid;
-					if (pid) process.kill(pid, "SIGSTOP");
+				case "pause": {
+					const targetName = typeof msg.payload?.daemon === "string" ? msg.payload.daemon : undefined;
+					if (targetName) {
+						const record = this.#records.get(targetName);
+						const pid = record?.snapshot?.pid;
+						if (pid) process.kill(pid, "SIGSTOP");
+					}
+					socket.write(`${JSON.stringify({ ok: true, cmd: "pause", daemon: targetName })}\n`);
+					break;
 				}
-				socket.write(JSON.stringify({ ok: true, cmd: "pause", daemon: targetName }) + "\n");
-				break;
-			}
-			case "resume": {
-				const targetName = typeof msg.payload?.daemon === "string" ? msg.payload.daemon : undefined;
-				if (targetName) {
-					const record = this.#records.get(targetName);
-					const pid = record?.snapshot?.pid;
-					if (pid) process.kill(pid, "SIGCONT");
+				case "resume": {
+					const targetName = typeof msg.payload?.daemon === "string" ? msg.payload.daemon : undefined;
+					if (targetName) {
+						const record = this.#records.get(targetName);
+						const pid = record?.snapshot?.pid;
+						if (pid) process.kill(pid, "SIGCONT");
+					}
+					socket.write(`${JSON.stringify({ ok: true, cmd: "resume", daemon: targetName })}\n`);
+					break;
 				}
-				socket.write(JSON.stringify({ ok: true, cmd: "resume", daemon: targetName }) + "\n");
-				break;
 			}
-		}
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
-			socket.write(JSON.stringify({ ok: false, error: message }) + "\n");
+			socket.write(`${JSON.stringify({ ok: false, error: message })}\n`);
 		}
 	}
 }

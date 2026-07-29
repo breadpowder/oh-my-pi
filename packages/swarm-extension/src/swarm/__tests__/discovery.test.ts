@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { discoverSwarmYaml, resolveSwarmYamlPath, substituteVars } from "../discovery";
 
 // ============================================================================
@@ -77,14 +79,12 @@ describe("substituteVars — ${VAR} substitution", () => {
 // ============================================================================
 describe("discoverSwarmYaml — end-to-end discovery + substitution + parsing", () => {
 	it("resolves named workflow, substitutes vars, and parses to typed SwarmAgent[]", async () => {
-		const home = process.env.HOME!;
-		const swarmDir = `${home}/.omp/agent/swarms`;
-		const yamlPath = `${swarmDir}/test-dev-workflow.yaml`;
-
+		const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "omp-discovery-test-"));
 		try {
+			const swarmDir = path.join(tmpHome, ".omp", "agent", "swarms");
 			await fs.mkdir(swarmDir, { recursive: true });
+			const yamlPath = path.join(swarmDir, "test-dev-workflow.yaml");
 
-			// Write fixture — string array avoids JS template interpolation of ${...}
 			const yamlContent = [
 				"swarm:",
 				'  name: "${WORKFLOW_NAME}"',
@@ -98,13 +98,12 @@ describe("discoverSwarmYaml — end-to-end discovery + substitution + parsing", 
 			].join("\n");
 			await fs.writeFile(yamlPath, yamlContent);
 
-			// Discover by name with substitution
 			const def = await discoverSwarmYaml("test-dev-workflow", {
+				homeOverride: tmpHome,
 				projectDir: "/tmp/test-proj",
 				workflowName: "run-1",
 			});
 
-			// A3: Parse result is a fully-typed SwarmDefinition
 			expect(def.name).toBe("run-1");
 			expect(def.workspace).toBe("/tmp/test-proj/.swarm_test");
 
@@ -112,23 +111,17 @@ describe("discoverSwarmYaml — end-to-end discovery + substitution + parsing", 
 			expect(coder).toBeDefined();
 			expect(coder?.task).toBe("Implement feature in /tmp/test-proj/src");
 		} finally {
-			try {
-				await fs.unlink(yamlPath);
-			} catch {
-				// ignore cleanup errors
-			}
+			await fs.rm(tmpHome, { recursive: true, force: true });
 		}
 	});
 
 	it("project-level decoy is never read (A1 acceptance)", async () => {
-		const home = process.env.HOME!;
-		const swarmDir = `${home}/.omp/agent/swarms`;
-		const yamlPath = `${swarmDir}/decoy-test.yaml`;
-
+		const tmpHome = await fs.mkdtemp(path.join(os.tmpdir(), "omp-discovery-test-"));
 		try {
+			const swarmDir = path.join(tmpHome, ".omp", "agent", "swarms");
 			await fs.mkdir(swarmDir, { recursive: true });
+			const yamlPath = path.join(swarmDir, "decoy-test.yaml");
 
-			// Write the real file at user level
 			const realYaml = [
 				"swarm:",
 				'  name: "real"',
@@ -142,9 +135,8 @@ describe("discoverSwarmYaml — end-to-end discovery + substitution + parsing", 
 			].join("\n");
 			await fs.writeFile(yamlPath, realYaml);
 
-			// Create a project-level decoy
 			const decoyDir = "/tmp/decoy-project/.omp/swarms";
-			const decoyPath = `${decoyDir}/decoy-test.yaml`;
+			const decoyPath = path.join(decoyDir, "decoy-test.yaml");
 			const decoyYaml = [
 				"swarm:",
 				'  name: "decoy"',
@@ -160,12 +152,11 @@ describe("discoverSwarmYaml — end-to-end discovery + substitution + parsing", 
 			await fs.writeFile(decoyPath, decoyYaml);
 
 			try {
-				// Discover by name — should find the user-level file
 				const def = await discoverSwarmYaml("decoy-test", {
+					homeOverride: tmpHome,
 					projectDir: "/tmp/decoy-project",
 				});
 
-				// Must be the real one, not the decoy
 				expect(def.name).toBe("real");
 				expect(def.workspace).toBe("/tmp/real");
 				expect(def.agents.get("coder")?.task).toBe("real task");
@@ -177,11 +168,7 @@ describe("discoverSwarmYaml — end-to-end discovery + substitution + parsing", 
 				}
 			}
 		} finally {
-			try {
-				await fs.unlink(yamlPath);
-			} catch {
-				// ignore
-			}
+			await fs.rm(tmpHome, { recursive: true, force: true });
 		}
 	});
 });

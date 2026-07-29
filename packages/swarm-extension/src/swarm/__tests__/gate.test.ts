@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { StateTracker } from "../state";
 import {
+	createAmbientGate,
 	gateFileExists,
 	gateFilePath,
 	gateResponseExists,
@@ -16,8 +16,8 @@ import {
 	waitForGateResponse,
 	writeGateFile,
 	writeGateResponse,
-	createAmbientGate,
 } from "../gate";
+import { StateTracker } from "../state";
 
 let workspace: string;
 let stateDir: string;
@@ -85,10 +85,7 @@ describe("E1 — Declared gate pause (§6.2)", () => {
 		// Pipeline is paused
 		await tracker.updatePipeline({ status: "paused" });
 
-		const raw = await fs.readFile(
-			path.join(workspace, ".swarm_gate-test", "state", "pipeline.json"),
-			"utf-8",
-		);
+		const raw = await fs.readFile(path.join(workspace, ".swarm_gate-test", "state", "pipeline.json"), "utf-8");
 		const persisted = JSON.parse(raw);
 
 		expect(persisted.status).toBe("paused");
@@ -374,5 +371,55 @@ describe("Gate file paths", () => {
 	it("pending question path uses per-agent naming", () => {
 		const filePath = pendingQuestionPath(stateDir, "myAgent");
 		expect(filePath).toBe(path.join(stateDir, "pending-question-myAgent.md"));
+	});
+});
+
+// ============================================================================
+// P2a — Stale gate-response cleared on re-gate
+// ============================================================================
+
+describe("P2a — stale gate-response cleared on re-gate", () => {
+	it("writeGateFile deletes existing gate-response before writing new gate", async () => {
+		const config = { prompt: "Approve?", actions: ["yes", "no"] };
+
+		// First gate + response
+		await writeGateFile(stateDir, "plan", config);
+		await writeGateResponse(stateDir, "plan", "yes");
+		expect(await gateResponseExists(stateDir, "plan")).toBe(true);
+
+		// Re-gate the same agent (simulates target_count > 1)
+		await writeGateFile(stateDir, "plan", config);
+
+		// Stale response must be gone
+		expect(await gateResponseExists(stateDir, "plan")).toBe(false);
+	});
+
+	it("waitForGateResponse blocks (does not resolve with stale response) after re-gate", async () => {
+		// Integration: waitForGateResponse polls via Bun.sleep internally;
+		// fake timers cannot drive the poll loop, so a real delay is required here.
+		const config = { prompt: "Approve?", actions: ["yes", "no"] };
+
+		// First gate cycle — stale response is "yes"
+		await writeGateFile(stateDir, "plan", config);
+		await writeGateResponse(stateDir, "plan", "yes");
+
+		// Re-gate: must clear stale response
+		await writeGateFile(stateDir, "plan", config);
+
+		// Start waiting — should NOT resolve immediately (stale "yes" was cleared)
+		let resolved = false;
+		const waitPromise = waitForGateResponse(stateDir, "plan", config).then(r => {
+			resolved = true;
+			return r;
+		});
+
+		// Let the poll loop tick once — still no response file, must still be pending
+		await Bun.sleep(150);
+		expect(resolved).toBe(false);
+
+		// Supply fresh response — must resolve with "no", not old "yes"
+		await writeGateResponse(stateDir, "plan", "no");
+		const response = await waitPromise;
+		expect(response.decision).toBe("no");
 	});
 });

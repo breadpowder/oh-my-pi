@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
 import { createDaemonBrokerClient, type DaemonBrokerClient } from "./client";
+import { sendCommand } from "./presence";
 import type { DaemonSnapshot, DaemonSpec } from "./protocol";
 
 const TERMINAL_HISTORY_LIMIT = 10;
@@ -84,6 +85,46 @@ describe("broker list", () => {
 			expect(listed.daemons.at(-1)?.exitedAt).toBe(51);
 		} finally {
 			await shutdown(client, activeName);
+		}
+	}, 20_000);
+});
+
+describe("G2 — gate-response command socket", () => {
+	it("gate-response command writes gate-response-<agent>.json into supplied stateDir", async () => {
+		using tempDir = TempDir.createSync("@omp-broker-g2-");
+		const projectDir = path.join(tempDir.path(), "project");
+		const runtimeDir = path.join(tempDir.path(), "runtime");
+		const stateDir = path.join(tempDir.path(), "state");
+		await fs.mkdir(projectDir);
+		await fs.mkdir(stateDir, { recursive: true });
+
+		const client = await createDaemonBrokerClient(projectDir, { runtimeDir, idleGraceMs: 5_000 });
+		try {
+			// Keep broker alive with a running daemon
+			await client.request({
+				op: "start",
+				spec: { ...spec("keepalive", projectDir), args: ["-e", "process.stdin.resume()"] },
+			});
+
+			// Send gate-response to the real broker command socket
+			const sockPath = path.join(runtimeDir, "command.sock");
+			const response = await sendCommand(sockPath, {
+				cmd: "gate-response",
+				payload: { gate: "coder", action: "approve", stateDir },
+			});
+
+			expect(response.ok).toBe(true);
+
+			// The real broker handler must have written the file (not a mock)
+			const filePath = path.join(stateDir, "gate-response-coder.json");
+			const written = (await Bun.file(filePath).json()) as { agent: string; decision: string; resolvedAt: number };
+			expect(written.agent).toBe("coder");
+			expect(written.decision).toBe("approve");
+			expect(typeof written.resolvedAt).toBe("number");
+		} finally {
+			await client.request({ op: "stop", name: "keepalive", timeoutMs: 2_000 }).catch(() => undefined);
+			await client.request({ op: "shutdown" }).catch(() => undefined);
+			client.close();
 		}
 	}, 20_000);
 });

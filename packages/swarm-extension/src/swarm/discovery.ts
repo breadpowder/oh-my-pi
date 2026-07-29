@@ -9,6 +9,7 @@
  */
 
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import { parseSwarmYaml, type SwarmDefinition } from "./schema";
 
@@ -23,7 +24,7 @@ import { parseSwarmYaml, type SwarmDefinition } from "./schema";
  * - Absolute path: returned as-is
  * - Relative path with `.yaml` extension: returned as-is (caller resolves)
  */
-export function resolveSwarmYamlPath(input: string): string {
+export function resolveSwarmYamlPath(input: string, options: { homeOverride?: string } = {}): string {
 	// Already absolute — pass through
 	if (path.isAbsolute(input)) {
 		return input;
@@ -40,7 +41,7 @@ export function resolveSwarmYamlPath(input: string): string {
 	}
 
 	// Named workflow — Option A: user-level only
-	const home = process.env.HOME ?? "";
+	const home = options.homeOverride ?? os.homedir();
 	return path.join(home, ".omp", "agent", "swarms", `${input}.yaml`);
 }
 
@@ -70,6 +71,8 @@ export interface DiscoveryOptions {
 	workflowName?: string;
 	/** Current working directory (used for relative path resolution). */
 	cwd?: string;
+	/** Override home directory (used for testing). */
+	homeOverride?: string;
 }
 
 /**
@@ -79,8 +82,8 @@ export interface DiscoveryOptions {
  * No project-level override, no `.omp/swarms/` shadow search.
  */
 export async function discoverSwarmYaml(nameOrPath: string, opts: DiscoveryOptions = {}): Promise<SwarmDefinition> {
-	const { projectDir, workflowName, cwd } = opts;
-	const resolvedPath = resolveSwarmYamlPath(nameOrPath);
+	const { projectDir, workflowName, cwd, homeOverride } = opts;
+	const resolvedPath = resolveSwarmYamlPath(nameOrPath, { homeOverride });
 
 	// Resolve relative paths against cwd
 	const absolutePath = path.isAbsolute(resolvedPath) ? resolvedPath : path.resolve(cwd ?? process.cwd(), resolvedPath);

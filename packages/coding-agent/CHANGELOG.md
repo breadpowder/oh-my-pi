@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added broker command socket (`command.sock` in the runtime directory): accepts `gate-response`, `kill`, `pause`, and `resume` commands over a newline-delimited JSON protocol; `gate-response` payload must include `gate` (agent name), `action` (decision), and `stateDir` (swarm state directory) and writes `gate-response-<agent>.json` directly so `waitForGateResponse` can unblock
+- Added `relayLink` and `roomKey` fields to the presence registry (`clients/*.json`); `discoverRelayLinks` and `sendCommand` exported from `presence.ts` for cross-process swarm discovery. **Not yet wired in production**: `main.ts` calls `registerDaemonProjectPresence(cwd)` before session creation so no relay URI exists at that point — `discoverRelayLinks` returns `[]` at runtime until TODO(B3) at `main.ts:1363` is addressed
+
+### Fixed
+
+- Fixed `broker.run()` returning immediately after sockets began listening instead of blocking until `shutdown()` completes; the PID lease in `startDaemonBrokerFromEnvironment`'s `finally` was released while the broker was still alive, creating a race where a second broker could acquire the lease and split daemon state
+- Fixed `broker.ts` `gate-response` command handler being a no-op (only logged and echoed `{ok:true}`); handler now reads `stateDir`/`gate`/`action` from the payload, validates the agent name against the daemon-name pattern, and writes `gate-response-<agent>.json` so a waiting pipeline can unblock
+
 ## [17.1.3] - 2026-07-24
 
 ### Fixed
