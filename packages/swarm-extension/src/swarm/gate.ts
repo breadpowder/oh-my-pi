@@ -52,6 +52,8 @@ export function pendingQuestionPath(stateDir: string, agentName: string): string
 // ============================================================================
 
 export async function writeGateFile(stateDir: string, agentName: string, config: GateConfig): Promise<void> {
+	// Clear any stale response from a prior gate for this agent (P2a)
+	await fs.rm(gateResponsePath(stateDir, agentName), { force: true });
 	const gateFile: GateFile = {
 		agent: agentName,
 		prompt: config.prompt,
@@ -156,9 +158,12 @@ export async function createAmbientGate(stateDir: string, agentName: string, que
  * - on_timeout: "default_action" → decision is defaultAction
  * - no on_timeout → decision is "fail" (default)
  */
-export async function handleGateTimeout(stateDir: string, agentName: string, config: GateConfig): Promise<GateResponse> {
-	const decision =
-		config.onTimeout === "default_action" && config.defaultAction ? config.defaultAction : "fail";
+export async function handleGateTimeout(
+	stateDir: string,
+	agentName: string,
+	config: GateConfig,
+): Promise<GateResponse> {
+	const decision = config.onTimeout === "default_action" && config.defaultAction ? config.defaultAction : "fail";
 	await writeGateResponse(stateDir, agentName, decision);
 	return { agent: agentName, decision, resolvedAt: Date.now() };
 }
@@ -197,7 +202,7 @@ export async function waitForGateResponse(
 		}
 
 		// Poll
-		await new Promise(resolve => setTimeout(resolve, GATE_POLL_INTERVAL));
+		await Bun.sleep(GATE_POLL_INTERVAL);
 	}
 }
 

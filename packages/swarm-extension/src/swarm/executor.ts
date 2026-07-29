@@ -16,9 +16,9 @@ import type {
 	SingleResult,
 } from "@oh-my-pi/pi-coding-agent";
 import { runSubprocess } from "@oh-my-pi/pi-coding-agent";
+import { writeGateFile } from "./gate";
 import type { SwarmAgent } from "./schema";
 import type { StateTracker } from "./state";
-import { writeGateFile } from "./gate";
 
 export interface SwarmExecutorOptions {
 	workspace: string;

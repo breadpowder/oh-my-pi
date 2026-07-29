@@ -189,10 +189,7 @@ export async function discoverRelayLinks(
 				continue;
 			}
 			// Only include entries that have relayLink
-			if (
-				typeof record.relayLink === "string" &&
-				record.relayLink.length > 0
-			) {
+			if (typeof record.relayLink === "string" && record.relayLink.length > 0) {
 				results.push({
 					pid,
 					id: (record.id as string) ?? "",
@@ -255,7 +252,7 @@ export async function sendCommand(
 	});
 
 	// Send the command
-	socket.write(JSON.stringify(message) + "\n");
+	socket.write(`${JSON.stringify(message)}\n`);
 
 	try {
 		const result = await promise;

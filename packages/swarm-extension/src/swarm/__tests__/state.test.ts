@@ -46,10 +46,7 @@ describe("StateTracker — resolvedModel per agent (K1)", () => {
 			status: "completed",
 		});
 
-		const raw = await fs.readFile(
-			path.join(workspace, ".swarm_no-model-test", "state", "pipeline.json"),
-			"utf-8",
-		);
+		const raw = await fs.readFile(path.join(workspace, ".swarm_no-model-test", "state", "pipeline.json"), "utf-8");
 		const persisted = JSON.parse(raw);
 
 		// resolvedModel should simply not appear or be undefined
@@ -70,10 +67,7 @@ describe("StateTracker — gateStatus per agent (K2)", () => {
 			gateStatus: { paused: true },
 		});
 
-		const raw = await fs.readFile(
-			path.join(workspace, ".swarm_gate-test", "state", "pipeline.json"),
-			"utf-8",
-		);
+		const raw = await fs.readFile(path.join(workspace, ".swarm_gate-test", "state", "pipeline.json"), "utf-8");
 		const persisted = JSON.parse(raw);
 
 		expect(persisted.agents.approver.gateStatus).toEqual({ paused: true });
@@ -89,10 +83,7 @@ describe("StateTracker — gateStatus per agent (K2)", () => {
 			gateStatus: { paused: true },
 		});
 
-		let raw = await fs.readFile(
-			path.join(workspace, ".swarm_gate-resolve-test", "state", "pipeline.json"),
-			"utf-8",
-		);
+		let raw = await fs.readFile(path.join(workspace, ".swarm_gate-resolve-test", "state", "pipeline.json"), "utf-8");
 		expect(JSON.parse(raw).agents.approver.gateStatus).toEqual({ paused: true });
 
 		// Phase 2: human resolves the gate
@@ -100,10 +91,7 @@ describe("StateTracker — gateStatus per agent (K2)", () => {
 			gateStatus: { paused: false, resolvedAction: "approve" },
 		});
 
-		raw = await fs.readFile(
-			path.join(workspace, ".swarm_gate-resolve-test", "state", "pipeline.json"),
-			"utf-8",
-		);
+		raw = await fs.readFile(path.join(workspace, ".swarm_gate-resolve-test", "state", "pipeline.json"), "utf-8");
 		const persisted = JSON.parse(raw);
 
 		expect(persisted.agents.approver.gateStatus.paused).toBe(false);

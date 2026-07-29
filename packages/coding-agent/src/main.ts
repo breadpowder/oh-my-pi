@@ -1360,6 +1360,10 @@ export async function runRootCommand(
 
 	await pluginPreloadPromise;
 	if (deps === DEFAULT_RUN_ROOT_DEPENDENCIES) {
+		// TODO(B3): pass { relayLink: `omp://session/${id}`, roomKey } once the session
+		// id is available here. Currently called before buildSessionOptions/createSession,
+		// so no relay URI exists yet — discoverRelayLinks always returns [] in production.
+		// Fix: move this call to after createSession (line ~1496) and pass the session id.
 		await logger.time("registerDaemonProjectPresence", registerDaemonProjectPresence, cwd);
 	}
 

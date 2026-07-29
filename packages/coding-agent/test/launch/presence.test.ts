@@ -3,11 +3,7 @@ import * as fs from "node:fs/promises";
 import * as net from "node:net";
 import * as path from "node:path";
 import { TempDir } from "@oh-my-pi/pi-utils";
-import {
-	discoverRelayLinks,
-	registerDaemonProjectPresence,
-	sendCommand,
-} from "../../src/launch/presence";
+import { discoverRelayLinks, registerDaemonProjectPresence, sendCommand } from "../../src/launch/presence";
 
 describe("relay-link registry + command socket", () => {
 	it("second process discovers first via relayLink/roomKey in presence registry", async () => {
@@ -95,7 +91,7 @@ describe("relay-link registry + command socket", () => {
 				try {
 					const msg = JSON.parse(line);
 					if (msg.cmd === "gate-response") {
-						socket.write(JSON.stringify({ ok: true, echoed: msg.payload }) + "\n");
+						socket.write(`${JSON.stringify({ ok: true, echoed: msg.payload })}\n`);
 					}
 				} catch {
 					// ignore
@@ -142,12 +138,12 @@ describe("relay-link registry + command socket", () => {
 					const msg = JSON.parse(line);
 					const validCmds = ["gate-response", "kill", "pause", "resume"];
 					if (validCmds.includes(msg.cmd)) {
-						socket.write(JSON.stringify({ ok: true, cmd: msg.cmd }) + "\n");
+						socket.write(`${JSON.stringify({ ok: true, cmd: msg.cmd })}\n`);
 					} else {
-						socket.write(JSON.stringify({ ok: false, error: `unknown command: ${msg.cmd}` }) + "\n");
+						socket.write(`${JSON.stringify({ ok: false, error: `unknown command: ${msg.cmd}` })}\n`);
 					}
 				} catch {
-					socket.write(JSON.stringify({ ok: false, error: "invalid json" }) + "\n");
+					socket.write(`${JSON.stringify({ ok: false, error: "invalid json" })}\n`);
 				}
 			});
 		});

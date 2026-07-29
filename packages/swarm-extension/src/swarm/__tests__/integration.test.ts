@@ -24,14 +24,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { TempDir } from "@oh-my-pi/pi-utils";
 import type { AgentDefinition, SingleResult } from "@oh-my-pi/pi-coding-agent";
-// G1: not exported from pi-coding-agent's public index; reachable via the ./* export map.
-import {
-	discoverRelayLinks,
-	registerDaemonProjectPresence,
-} from "@oh-my-pi/pi-coding-agent/launch/presence";
 import * as taskExecutor from "@oh-my-pi/pi-coding-agent";
+// G1: not exported from pi-coding-agent's public index; reachable via the ./* export map.
+import { discoverRelayLinks, registerDaemonProjectPresence } from "@oh-my-pi/pi-coding-agent/launch/presence";
+import { TempDir } from "@oh-my-pi/pi-utils";
 import { discoverSwarmYaml } from "../discovery";
 import { executeSwarmAgent } from "../executor";
 import { StateTracker } from "../state";
@@ -77,9 +74,9 @@ describe("D1 — Executor: AgentDefinition + modelOverride", () => {
 	it("D1: passes raw modelOverride alias and typed AgentDefinition to runSubprocess", async () => {
 		// D1: agent: reviewer, model: @plan → spy must see modelOverride === "@plan" (raw, not expanded)
 		// and opts.agent must be a typed AgentDefinition with .name matching the declared name.
-		const spy = vi.spyOn(taskExecutor, "runSubprocess").mockResolvedValue(
-			makeMockResult({ id: "swarm-d1-reviewer-0" }),
-		);
+		const spy = vi
+			.spyOn(taskExecutor, "runSubprocess")
+			.mockResolvedValue(makeMockResult({ id: "swarm-d1-reviewer-0" }));
 
 		const stateTracker = new StateTracker(workspace, "d1-swarm");
 		await stateTracker.init(["reviewer"], 1, "sequential");
@@ -120,50 +117,45 @@ describe("D1 — Executor: AgentDefinition + modelOverride", () => {
 // ============================================================================
 
 describe("G1 — Process presence: relay-link discovery", () => {
-	it(
-		"G1: second process discovers first via relayLink + roomKey in clients/*.json",
-		async () => {
-			using tempDir = TempDir.createSync("@omp-swarm-g1-");
-			const projectDir = path.join(tempDir.path(), "project");
-			const runtimeDir = path.join(tempDir.path(), "runtime");
-			await fs.mkdir(projectDir, { recursive: true });
+	it("G1: second process discovers first via relayLink + roomKey in clients/*.json", async () => {
+		using tempDir = TempDir.createSync("@omp-swarm-g1-");
+		const projectDir = path.join(tempDir.path(), "project");
+		const runtimeDir = path.join(tempDir.path(), "runtime");
+		await fs.mkdir(projectDir, { recursive: true });
 
-			const relayLink1 = "omp://session/swarm-g1-alpha";
-			const roomKey1 = "swarm-room-g1";
+		const relayLink1 = "omp://session/swarm-g1-alpha";
+		const roomKey1 = "swarm-room-g1";
 
-			const presence1 = await registerDaemonProjectPresence(projectDir, {
-				runtimeDir,
-				relayLink: relayLink1,
-				roomKey: roomKey1,
-			});
+		const presence1 = await registerDaemonProjectPresence(projectDir, {
+			runtimeDir,
+			relayLink: relayLink1,
+			roomKey: roomKey1,
+		});
 
-			try {
-				const links = await discoverRelayLinks(runtimeDir, undefined);
+		try {
+			const links = await discoverRelayLinks(runtimeDir, undefined);
 
-				// The second process can see the first entry
-				const found = links.find(l => l.relayLink === relayLink1);
-				expect(found).toBeTruthy();
+			// The second process can see the first entry
+			const found = links.find(l => l.relayLink === relayLink1);
+			expect(found).toBeTruthy();
 
-				// relayLink and roomKey are both present (not just pid/id/projectDir)
-				expect(found?.relayLink).toBe(relayLink1);
-				expect(found?.roomKey).toBe(roomKey1);
-				expect(found?.pid).toBe(process.pid);
-			} finally {
-				await presence1.close();
-			}
-		},
-		10_000,
-	);
+			// relayLink and roomKey are both present (not just pid/id/projectDir)
+			expect(found?.relayLink).toBe(relayLink1);
+			expect(found?.roomKey).toBe(roomKey1);
+			expect(found?.pid).toBe(process.pid);
+		} finally {
+			await presence1.close();
+		}
+	}, 10_000);
 });
 
 // ============================================================================
 // G2 — Dashboard → control plane: gate submit (known-open)
 // ============================================================================
 
-it.skip(
-	"G2: gate-response command socket delivery — broker has no state-dir bridge; delivery is a deferred seam",
-	() => { /* deferred */ },
-);
+it.skip("G2: gate-response command socket delivery — tested in packages/coding-agent/src/launch/broker-list-order.test.ts (requires real DaemonBroker)", () => {
+	/* see broker-list-order.test.ts G2 */
+});
 
 // ============================================================================
 // G3 — Dashboard → control plane: kill/pause (safety-deferred)
@@ -179,13 +171,6 @@ it.skip("G3: kill/pause live process via command socket — safety-deferred by o
 // ============================================================================
 
 describe("I1 — Symlink → discovered by name", () => {
-	let origHome: string | undefined;
-
-	afterEach(() => {
-		// Restore HOME regardless of test outcome
-		process.env.HOME = origHome;
-	});
-
 	it("I1: symlink in ~/.omp/agent/swarms/ resolves to the repo source YAML", async () => {
 		using tempDir = TempDir.createSync("@omp-swarm-i1-");
 		const fakeHome = tempDir.path();
@@ -217,24 +202,18 @@ describe("I1 — Symlink → discovered by name", () => {
 		const symlinkPath = path.join(swarmDir, "my-workflow.yaml");
 		await fs.symlink(repoYaml, symlinkPath);
 
-		// Override HOME so resolveSwarmYamlPath resolves into the temp dir
-		origHome = process.env.HOME;
-		process.env.HOME = fakeHome;
-
+		// homeOverride points discovery at the temp dir — no process.env.HOME mutation
 		const def = await discoverSwarmYaml("my-workflow", {
 			projectDir: "/tmp/i1-proj",
 			workflowName: "my-run",
+			homeOverride: fakeHome,
 		});
 
-		// Discovery succeeded — YAML was read through the symlink
 		expect(def).toBeDefined();
 		expect(def.agents.has("plan")).toBe(true);
-
-		// Vars were substituted (single source of truth, editing repo copy is immediately visible)
 		expect(def.name).toBe("my-run");
 		expect(def.workspace).toBe("/tmp/i1-proj");
 
-		// Gate was parsed
 		const planAgent = def.agents.get("plan");
 		expect(planAgent?.gate).toBeDefined();
 		expect(planAgent?.gate?.actions).toEqual(["approve", "reject"]);
@@ -246,38 +225,34 @@ describe("I1 — Symlink → discovered by name", () => {
 // ============================================================================
 
 describe("J1 — dev-workflow.yaml: discovery → parse → gate config reached", () => {
-	it(
-		"J1: discoverSwarmYaml('dev-workflow') resolves symlink, parses YAML, plan+reviewer have gates",
-		async () => {
-			// J1 contract: verify the full discovery→parse→gate chain WITHOUT spawning real agents.
-			// The symlink ~/.omp/agent/swarms/dev-workflow.yaml → repo file is pre-installed.
-			const def = await discoverSwarmYaml("dev-workflow", {
-				projectDir: "/tmp/j1-test",
-				workflowName: "j1-test",
-			});
+	it("J1: discoverSwarmYaml('dev-workflow') resolves symlink, parses YAML, plan+reviewer have gates", async () => {
+		// J1 contract: verify the full discovery→parse→gate chain WITHOUT spawning real agents.
+		// The symlink ~/.omp/agent/swarms/dev-workflow.yaml → repo file is pre-installed.
+		const def = await discoverSwarmYaml("dev-workflow", {
+			projectDir: "/tmp/j1-test",
+			workflowName: "j1-test",
+		});
 
-			// Discovery resolved and parsed without error
-			expect(def).toBeDefined();
-			expect(def.agents.size).toBeGreaterThan(0);
+		// Discovery resolved and parsed without error
+		expect(def).toBeDefined();
+		expect(def.agents.size).toBeGreaterThan(0);
 
-			// plan agent has a gate (first human checkpoint)
-			const plan = def.agents.get("plan");
-			expect(plan).toBeDefined();
-			expect(plan?.gate).toBeDefined();
-			expect(Array.isArray(plan?.gate?.actions)).toBe(true);
-			expect((plan?.gate?.actions ?? []).length).toBeGreaterThan(0);
+		// plan agent has a gate (first human checkpoint)
+		const plan = def.agents.get("plan");
+		expect(plan).toBeDefined();
+		expect(plan?.gate).toBeDefined();
+		expect(Array.isArray(plan?.gate?.actions)).toBe(true);
+		expect((plan?.gate?.actions ?? []).length).toBeGreaterThan(0);
 
-			// reviewer agent has a gate (second human checkpoint)
-			const reviewer = def.agents.get("reviewer");
-			expect(reviewer).toBeDefined();
-			expect(reviewer?.gate).toBeDefined();
-			expect(Array.isArray(reviewer?.gate?.actions)).toBe(true);
-			expect((reviewer?.gate?.actions ?? []).length).toBeGreaterThan(0);
+		// reviewer agent has a gate (second human checkpoint)
+		const reviewer = def.agents.get("reviewer");
+		expect(reviewer).toBeDefined();
+		expect(reviewer?.gate).toBeDefined();
+		expect(Array.isArray(reviewer?.gate?.actions)).toBe(true);
+		expect((reviewer?.gate?.actions ?? []).length).toBeGreaterThan(0);
 
-			// Vars were substituted
-			expect(def.workspace).toBe("/tmp/j1-test");
-			expect(def.name).toBe("j1-test");
-		},
-		10_000,
-	);
+		// Vars were substituted
+		expect(def.workspace).toBe("/tmp/j1-test");
+		expect(def.name).toBe("j1-test");
+	}, 10_000);
 });
