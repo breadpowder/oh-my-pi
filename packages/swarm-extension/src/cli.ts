@@ -56,11 +56,12 @@ const nameOrPath = positionalArgs[0];
 if (!nameOrPath) {
 	console.error(
 		[
-			"Usage: omp-swarm <path-to-yaml> [--project <dir>] [--name <swarm-name>]",
-			"       omp-swarm <workflow-name> [--project <dir>] [--name <swarm-name>]",
+			"Usage: omp-swarm <path-to-yaml> [--project <dir>] [--name <swarm-name>] [--from <agent>]",
+			"       omp-swarm <workflow-name> [--project <dir>] [--name <swarm-name>] [--from <agent>]",
 			"",
 			"  --project <dir>   Project directory for ${PROJECT_DIR} substitution",
 			"  --name <name>     Workflow name for ${WORKFLOW_NAME} substitution",
+			"  --from <agent>    Resume from a completed agent (skips already-completed agents)",
 		].join("\n"),
 	);
 	process.exit(1);
@@ -112,9 +113,17 @@ const workspace = path.isAbsolute(def.workspace) ? def.workspace : path.resolve(
 await fs.mkdir(workspace, { recursive: true });
 console.log(`Workspace: ${workspace}`);
 
-// Initialize
 const stateTracker = new StateTracker(workspace, def.name);
-await stateTracker.init([...def.agents.keys()], def.targetCount, def.mode);
+if (flags.from) {
+	const loaded = await stateTracker.load();
+	if (!loaded) {
+		console.error(`Error: no saved state found for swarm '${def.name}'. Cannot resume.`);
+		process.exit(1);
+	}
+	console.log(`Resuming from agent: ${flags.from}`);
+} else {
+	await stateTracker.init([...def.agents.keys()], def.targetCount, def.mode);
+}
 
 // Auth + settings
 const authStorage = await discoverAuthStorage();
@@ -128,9 +137,10 @@ const PROGRESS_INTERVAL_MS = 5000;
 // Run
 console.log("\n--- Pipeline starting ---\n");
 
-const controller = new PipelineController(def, waves, stateTracker);
+const controller = new PipelineController(def, waves, stateTracker, flags.from || undefined);
 const result = await controller.run({
 	workspace,
+	fromAgent: flags.from || undefined,
 	onProgress: () => {
 		const now = Date.now();
 		if (now - lastProgressDump > PROGRESS_INTERVAL_MS) {

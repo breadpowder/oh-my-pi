@@ -31,6 +31,8 @@ export interface PipelineOptions {
 	onProgress?: (state: PipelineProgress) => void;
 	modelRegistry?: ModelRegistry;
 	settings?: Settings;
+	/** Agent name to resume from; completed agents on iteration 0 are skipped. */
+	fromAgent?: string;
 }
 
 export interface PipelineProgress {
@@ -56,15 +58,18 @@ export class PipelineController {
 	#def: SwarmDefinition;
 	#waves: string[][];
 	#stateTracker: StateTracker;
+	#fromAgent?: string;
 
-	constructor(def: SwarmDefinition, waves: string[][], stateTracker: StateTracker) {
+	constructor(def: SwarmDefinition, waves: string[][], stateTracker: StateTracker, fromAgent?: string) {
 		this.#def = def;
 		this.#waves = waves;
 		this.#stateTracker = stateTracker;
+		this.#fromAgent = fromAgent;
 	}
 
 	async run(options: PipelineOptions): Promise<PipelineResult> {
-		const { workspace, signal, onProgress, modelRegistry, settings } = options;
+		const { workspace, signal, onProgress, modelRegistry, settings, fromAgent } = options;
+		this.#fromAgent = fromAgent ?? this.#fromAgent;
 		const allResults = new Map<string, SingleResult[]>();
 		const errors: string[] = [];
 
@@ -151,8 +156,14 @@ export class PipelineController {
 				`Wave ${waveIdx + 1}/${this.#waves.length}: [${wave.join(", ")}]`,
 			);
 
-			// Mark agents in this wave as waiting
+			// Mark agents in this wave as waiting (skip already-completed on iteration 0 when resuming)
+			const isResumingIterationZero = this.#fromAgent !== undefined && iteration === 0;
 			for (const agentName of wave) {
+				const agentState = this.#stateTracker.state.agents[agentName];
+				if (isResumingIterationZero && agentState?.status === "completed") {
+					// Do NOT call updateAgent — it would overwrite their completed state
+					continue;
+				}
 				await this.#stateTracker.updateAgent(agentName, {
 					status: "waiting",
 					iteration,
@@ -166,6 +177,32 @@ export class PipelineController {
 				wave.map(async agentName => {
 					const agent = this.#def.agents.get(agentName)!;
 					const currentIndex = agentIndex++;
+
+					// Skip already-completed agents on iteration 0 when resuming
+					if (isResumingIterationZero) {
+						const agentState = this.#stateTracker.state.agents[agentName];
+						if (agentState?.status === "completed") {
+							await this.#stateTracker.appendOrchestratorLog(
+								`Skipping ${agentName} (already completed in previous run)`,
+							);
+							const cachedResult: SingleResult = {
+								index: currentIndex,
+								id: `swarm-${this.#def.name}-${agentName}-${iteration}`,
+								agent: agentName,
+								agentSource: "project" as AgentSource,
+								task: agent.task,
+								exitCode: 0,
+								output: "",
+								stderr: "",
+								truncated: false,
+								durationMs: 0,
+								tokens: 0,
+								requests: 0,
+							};
+							return { agentName, result: cachedResult };
+						}
+					}
+
 					// Resolve per-agent workspace: agent.workspace is relative to swarm workspace
 					const agentWorkspace = agent.workspace
 						? path.resolve(options.workspace, agent.workspace)
